@@ -1,5 +1,19 @@
 # Serial Proxy
 
+`serial-proxy` is a Linux daemon that will proxy data from any number of
+serial devices (RS232) to their respective pseudo-terminals (virtual serial
+ports). This allows more than one application to receive raw data from a single
+serial port and pretend it is reading from a physical device.
+
+    /dev/ttyS1 (Garmin GPS)  /dev/ttyUSB1 (Temperature readings)
+         |                         |
+        / \                       /|\
+       /   \                     / | \
+      /     \                   /  |  \
+    App1   App2              App3 App4 App5
+
+This is a C port of [rkubik/serial-proxy](https://github.com/rkubik/serial-proxy).
+
 ## Features
 
 - C
