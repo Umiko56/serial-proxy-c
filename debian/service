@@ -1,0 +1,11 @@
+[Unit]
+Description=Virtual serial proxy daemon
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/sproxyd -d -c /etc/serial-proxy/sproxy.ini
+Restart=always
+PIDFile=/var/run/serial-proxy.pid
+
+[Install]
+WantedBy=multi-user.target

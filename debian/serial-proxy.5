@@ -1,0 +1,38 @@
+.TH "SERIAL-PROXY" "5" "AUGUST 2015" "russkubik@gmail.com" "User Manuals"
+.SH "NAME"
+/etc/serial-proxy/sproxy.ini \- default INI configuration used by systemd
+service script
+.SH SYNOPSIS
+.br
+Optional INI configuration file that is used by the sproxyd daemon.
+.br
+.SH "SAMPLE CONFIGURATION FILE"
+.PP
+.br
+[logging]
+.br
+loglevel = debug
+.br
+syslog-enabled = no
+.br
+logfile = /var/log/sproxy.log
+.br
+[system]
+.br
+pidfile = /var/run/sproxyd.pid
+.br
+serial-configfile = /etc/serial-proxy/serial.ini
+.br
+hz = 10
+.br
+.SH SEE ALSO
+.BR serial-proxy (1)
+.br
+.SH FOLDER
+.br
+/etc/serial-proxy
+.br
+.SH AUTHOR
+serial-proxy was written by Russ Kubik <russkubik@gmail.com>.
+.PP
+This manual page was written by Russ Kubik <russkubik@gmail.com>
