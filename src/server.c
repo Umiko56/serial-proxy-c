@@ -21,8 +21,9 @@ static void sigShutdownHandler(int sig) {
     switch (sig) {
         case SIGINT:
         case SIGTERM:
-        default:
             break;
+        default:
+            return;
     };
 
     /* SIGINT is often delivered via Ctrl+C in an interactive session.
@@ -64,12 +65,13 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         if (prepareForShutdown() == C_OK) {
             aeStop(eventLoop);
         } else {
-            serverLog(LL_WARNING, "SIGTERM received but errors trying to shut down the server, check the logs for more information");
+            serverLog(LL_WARNING, "SIGTERM received but errors trying to shut "
+                      "down the server, check the logs for more information");
             server.shutdown = 0;
         }
     }
 
-    run_with_period(100) {
+    run_with_period(1000) {
         serialCron();
     }
 
@@ -77,7 +79,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     return 1000/server.hz;
 }
 
-void initServerConfig(void) {
+void serverInitConfig(void) {
     server.pid = getpid();
     server.configfile = NULL;
     server.pidfile = NULL;
@@ -94,7 +96,7 @@ void initServerConfig(void) {
     server.cron_event_id = AE_ERR;
 }
 
-void initServer(void) {
+void serverInit(void) {
     signal(SIGHUP, SIG_IGN);
     signal(SIGPIPE, SIG_IGN);
     setupSignalHandlers();
@@ -109,7 +111,7 @@ void initServer(void) {
     serialInit();
 }
 
-void termServer(void) {
+void serverTerm(void) {
     serialTerm();
 
     if (server.logfile) free(server.logfile);
@@ -169,7 +171,7 @@ void usage(void) {
     exit(1);
 }
 
-void beforeSleep(struct aeEventLoop *eventLoop) {
+void serverBeforeSleep(struct aeEventLoop *eventLoop) {
     serialBeforeSleep();
 }
 
@@ -211,8 +213,22 @@ void serverLog(int level, const char *fmt, ...) {
     serverLogRaw(level, msg);
 }
 
+void serverLogErrno(int level, const char *fmt, ...) {
+    va_list ap;
+    char msg[LOG_MAX_LEN];
+    char *diag_fmt = "%s, Error: %s (%d)";
+
+    if ((level&0xff) < server.verbosity) return;
+
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof(msg), fmt, ap);
+    va_end(ap);
+
+    serverLog(level, diag_fmt, msg, strerror(errno), errno);
+}
+
 int main(int argc, char *argv[]) {
-    initServerConfig();
+    serverInitConfig();
 
     int c;
     while ((c = getopt(argc, argv, "c:dvh")) != -1) {
@@ -231,7 +247,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    loadServerConfig(server.configfile);
+    serverLoadConfig(server.configfile);
 
     if (server.daemonize) {
         daemonize();
@@ -241,13 +257,13 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    initServer();
+    serverInit();
 
     serverLog(LL_NOTICE,"Server started, Sproxy version " SPROXY_VERSION);
 
-    aeSetBeforeSleepProc(server.el, beforeSleep);
+    aeSetBeforeSleepProc(server.el, serverBeforeSleep);
     aeMain(server.el);
-    termServer();
+    serverTerm();
     aeDeleteEventLoop(server.el);
 
     return 0;

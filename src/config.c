@@ -63,7 +63,7 @@ const char* name, const char* value) {
     return 1;
 }
 
-void loadServerConfig(const char *filename) {
+void serverLoadConfig(const char *filename) {
     if (filename && ini_parse(filename, serverConfigHandler, &server) < 0) {
         fprintf(stderr, "Can't load config file: %s\n", filename);
         exit(1);
@@ -85,7 +85,7 @@ const char* name, const char* value) {
 
     /* not found, create */
     if (node == NULL) {
-        node = createSerialNode(section, SERIAL_NODE_MASTER);
+        node = serialCreateNode(section, SERIAL_NODE_MASTER);
         serialAddNode(node);
     }
 
@@ -99,7 +99,7 @@ const char* name, const char* value) {
             char buf[strlen(section) + sizeof(token) + 1];
             snprintf(buf, sizeof buf, "%s.%s", section, token);
 
-            serialNode *vnode = createSerialNode(buf, SERIAL_NODE_VIRTUAL);
+            serialNode *vnode = serialCreateNode(buf, SERIAL_NODE_VIRTUAL);
             serialNodeAddVirtual(node, vnode);
 
             token = strtok(NULL, " ");
@@ -112,7 +112,7 @@ const char* name, const char* value) {
     return 1;
 }
 
-void loadSerialConfig(const char *filename) {
+void serialLoadConfig(const char *filename) {
     if (!filename) {
         fprintf(stderr, "Serial config file must be given\n");
         exit(1);

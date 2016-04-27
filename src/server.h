@@ -35,7 +35,9 @@
 #define LL_ERROR 4
 #define CONFIG_DEFAULT_VERBOSITY LL_DEBUG
 
-#define run_with_period(_ms_) if ((_ms_ <= 1000/server.hz) || !(server.cronloops%((_ms_)/(1000/server.hz))))
+/* Convert milliseconds to cronloops based on server HZ value */
+#define run_with_period(_ms_) if ((_ms_ <= 1000/server.hz) || \
+        !(server.cronloops%((_ms_)/(1000/server.hz))))
 
 struct sproxyServer {
     pid_t pid;                  /* Main process pid.*/
@@ -55,20 +57,80 @@ struct sproxyServer {
     struct serialState *serial; /* State of serial devices */
 };
 
-/* Extern declarations */
+/*
+ * Extern declarations
+ */
 extern struct sproxyServer server;
 
-/* Core functions */
-void serverLog(int level, const char *fmt, ...);
-void serverLogRaw(int level, const char *msg);
-void loadServerConfig(const char *filename);
-void usage(void);
+/*
+ * Server
+ */
 
-/* Serial */
+/**
+ * @brief Logging helper that accepts a formatted string and any number of
+ *        arguments to fill it.
+ *
+ * @param[in] level Logging level of message
+ * @param[in] fmt String to substitute with given variable arguments
+ * @param[in] ... Variable arguments
+ */
+void serverLog(int level, const char *fmt, ...);
+
+/**
+ * @brief Logging helper to print given message.
+ *
+ * @param[in] level Logging level of message
+ * @param[in] msg Message to log
+ */
+void serverLogRaw(int level, const char *msg);
+
+/**
+ * @brief Logging helper to print errno diagnostics.
+ *
+ * @param[in] level Logging level of message
+ * @param[in] fmt String to substitute with given variable arguments
+ * @param[in] ... Variable arguments
+ */
+void serverLogErrno(int level, const char *fmt, ...);
+
+/**
+ * @brief Load server configuration from given file.
+ *
+ * @param[in] filename File name containing server configuration
+ */
+void serverLoadConfig(const char *filename);
+
+/*
+ * Serial
+ */
+
+/**
+ * @brief Set serial default configuration and load overrides from file.
+ */
 void serialInit(void);
+
+/**
+ * @brief Attempt a clean shutdown by closing all serialNode devices.
+ */
 void serialTerm(void);
+
+/**
+ * @brief Called before every event loop iteration. Reset all serialNode
+ *        receive buffers.
+ */
 void serialBeforeSleep(void);
+
+/**
+ * @brief Called at a specified interval, will attempt to reconnect all
+ *        serialNode that are disconnected.
+ */
 void serialCron(void);
-void loadSerialConfig(const char *filename);
+
+/**
+ * @brief Load serial configuration from given file.
+ *
+ * @param[in] filename File name containing serial configuration
+ */
+void serialLoadConfig(const char *filename);
 
 #endif

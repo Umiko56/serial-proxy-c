@@ -25,7 +25,7 @@ void serialBeforeSleep(void) {
     }
 }
 
-serialLink *createSerialLink(serialNode *node) {
+serialLink *serialCreateLink(serialNode *node) {
     serialLink *link = malloc(sizeof(*link));
     link->node = node;
     link->fd = -1;
@@ -34,7 +34,7 @@ serialLink *createSerialLink(serialNode *node) {
     return link;
 }
 
-void freeSerialLink(serialLink *link) {
+void serialFreeLink(serialLink *link) {
     if (link->fd != -1) {
         aeDeleteFileEvent(server.el, link->fd, AE_WRITABLE);
         aeDeleteFileEvent(server.el, link->fd, AE_READABLE);
@@ -51,13 +51,48 @@ void freeSerialLink(serialLink *link) {
     free(link);
 }
 
-void handleLinkIOError(serialLink *link) {
-    freeSerialLink(link);
+void serialLinkIOError(serialLink *link) {
+    serialFreeLink(link);
 }
 
-int serialAcceptHandler(serialNode *node) {
+serialNode *serialCreateNode(const char *nodename, int flags) {
+    serialNode *node = malloc(sizeof(*node));
+
+    if (nodename) {
+        memcpy(node->name, nodename, SERIAL_NAMELEN);
+    }
+
+    node->link = NULL;
+    node->flags = flags;
+    node->numvirtuals = 0;
+    node->virtuals = NULL;
+    node->virtualof = NULL;
+    node->baudrate = 9600;
+    return node;
+}
+
+void serialFreeNode(serialNode *n) {
+    int j;
+
+    for (j = 0; j < n->numvirtuals; j++) {
+        n->virtuals[j]->virtualof = NULL;
+    }
+
+    if (nodeIsVirtual(n)) {
+        remove(n->name);
+
+        if (n->virtualof) {
+            serialNodeRemoveVirtual(n->virtualof, n);
+        }
+    }
+
+    free(n->virtuals);
+    free(n);
+}
+
+int serialConnect(serialNode *node) {
     struct termios ts;
-    serialLink *link = createSerialLink(node);
+    serialLink *link = serialCreateLink(node);
     int custom_baud = 0;
 
     /* Already opened */
@@ -69,25 +104,30 @@ int serialAcceptHandler(serialNode *node) {
         link->fd = open(node->name, O_RDWR | O_NOCTTY);
 
         if (link->fd == -1) {
+            serverLogErrno(LL_ERROR, "open");
             goto err;
         }
 
         if (isatty(link->fd) == -1) {
+            serverLogErrno(LL_ERROR, "isatty");
             goto err;
         }
     } else if (nodeIsVirtual(node)) {
         if (openpty(&link->fd, &link->sfd, NULL, NULL, NULL) == -1) {
+            serverLogErrno(LL_ERROR, "openpty");
             goto err;
         }
 
         remove(node->name);
 
         if (symlink(ttyname(link->sfd), node->name) == -1) {
+            serverLogErrno(LL_ERROR, "symlink");
             goto err;
         }
     }
 
     if (tcgetattr(link->fd, &ts) == -1) {
+        serverLogErrno(LL_ERROR, "tcgetattr");
         goto err;
     }
 
@@ -220,6 +260,7 @@ int serialAcceptHandler(serialNode *node) {
                 ser.flags |= ASYNC_SPD_CUST;
 
                 if (ioctl(link->fd, TIOCSSERIAL, &ser) == -1) {
+                    serverLogErrno(LL_ERROR, "ioctl");
                     goto err;
                 }
         }
@@ -233,6 +274,7 @@ int serialAcceptHandler(serialNode *node) {
     cfmakeraw(&ts);
 
     if (tcsetattr(link->fd, TCSANOW, &ts) == -1) {
+        serverLogErrno(LL_ERROR, "tcsetattr");
         goto err;
     }
 
@@ -246,7 +288,7 @@ int serialAcceptHandler(serialNode *node) {
 
     return C_OK;
 err:
-    handleLinkIOError(link);
+    serialLinkIOError(link);
     return C_ERR;
 }
 
@@ -255,20 +297,18 @@ void serialInit(void) {
     server.serial->size = 0;
     server.serial->nodes = malloc(sizeof(serialNode));
 
-    loadSerialConfig(server.serial_configfile);
+    serialLoadConfig(server.serial_configfile);
 }
 
 void serialCron(void) {
     int j, i;
-
     for (j = 0; j < server.serial->size; j++) {
         serialNode *node = server.serial->nodes[j];
 
         if (node->link == NULL) {
-            if (serialAcceptHandler(node) == C_ERR) {
+            if (serialConnect(node) == C_ERR) {
                 serverLog(LL_WARNING, "Problem reconnecting serial "
-                    "device: %s",
-                    node->name);
+                          "device: %s", node->name);
                 continue;
             } else {
                 serverLog(LL_DEBUG, "Reconnected serial: %s", node->name);
@@ -279,10 +319,9 @@ void serialCron(void) {
             serialNode *vnode = node->virtuals[i];
 
             if (vnode->link == NULL) {
-                if (serialAcceptHandler(vnode) == C_ERR) {
+                if (serialConnect(vnode) == C_ERR) {
                     serverLog(LL_WARNING, "Problem reconnecting virtual "
-                        "serial device: %s",
-                        vnode->name);
+                              "serial device: %s", vnode->name);
                     continue;
                 } else {
                     serverLog(LL_DEBUG, "Reconnected virtual: %s", vnode->name);
@@ -292,44 +331,12 @@ void serialCron(void) {
     }
 }
 
-serialNode *createSerialNode(const char *nodename, int flags) {
-    serialNode *node = malloc(sizeof(*node));
-
-    if (nodename) {
-        memcpy(node->name, nodename, SERIAL_NAMELEN);
-    }
-
-    node->link = NULL;
-    node->flags = flags;
-    node->numvirtuals = 0;
-    node->virtuals = NULL;
-    node->virtualof = NULL;
-    node->baudrate = 9600;
-    return node;
-}
-
-int serialNodeRemoveVirtual(serialNode *master, serialNode *virtual) {
-    int j;
-
-    for (j = 0; j < master->numvirtuals; j++) {
-        if (master->virtuals[j] == virtual) {
-            if ((j+1) < master->numvirtuals) {
-                int remaining_virtuals = (master->numvirtuals - j) - 1;
-                memmove(master->virtuals+j,master->virtuals+(j+1),
-                        (sizeof(*master->virtuals) * remaining_virtuals));
-            }
-            master->numvirtuals--;
-            /* TODO handle 0 virtuals */
-            return C_OK;
-        }
-    }
-
-    return C_ERR;
-}
-
 int serialNodeAddVirtual(serialNode *master, serialNode *virtual) {
-    int j;
+    if (nodeIsVirtual(master)) {
+        return C_ERR;
+    }
 
+    int j;
     for (j = 0; j < master->numvirtuals; j++) {
         if (master->virtuals[j] == virtual) {
             return C_ERR;
@@ -345,23 +352,25 @@ int serialNodeAddVirtual(serialNode *master, serialNode *virtual) {
     return C_OK;
 }
 
-void freeSerialNode(serialNode *n) {
-    int j;
-
-    for (j = 0; j < n->numvirtuals; j++) {
-        n->virtuals[j]->virtualof = NULL;
+int serialNodeRemoveVirtual(serialNode *master, serialNode *virtual) {
+    if (nodeIsVirtual(master)) {
+        return C_ERR;
     }
 
-    if (nodeIsVirtual(n)) {
-        remove(n->name);
-
-        if (n->virtualof) {
-            serialNodeRemoveVirtual(n->virtualof, n);
+    int j;
+    for (j = 0; j < master->numvirtuals; j++) {
+        if (master->virtuals[j] == virtual) {
+            if ((j+1) < master->numvirtuals) {
+                int remaining_virtuals = (master->numvirtuals - j) - 1;
+                memmove(master->virtuals+j,master->virtuals+(j+1),
+                        (sizeof(*master->virtuals) * remaining_virtuals));
+            }
+            master->numvirtuals--;
+            return C_OK;
         }
     }
 
-    free(n->virtuals);
-    free(n);
+    return C_ERR;
 }
 
 void serialSetNodeAsMaster(serialNode *n) {
@@ -381,19 +390,17 @@ void serialSetNodeAsMaster(serialNode *n) {
 void serialWriteHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
     serialLink *link = (serialLink*) privdata;
 
-    if (link->node && nodeIsVirtual(link->node)) {
+    if (link && link->node && nodeIsVirtual(link->node)) {
         /* Read from master */
         serialLink *mlink = link->node->virtualof->link;
 
         /* Check if master is connected */
         if (mlink && mlink->recvbuflen > 0) {
             int numwritten = write(link->fd, mlink->recvbuf, mlink->recvbuflen);
-
             if (numwritten <= 0) {
-                serverLog(LL_DEBUG,"I/O error writing to node link: %s",
-                    strerror(errno));
-                handleLinkIOError(link);
-                return;
+                serverLogErrno(LL_DEBUG, "I/O error writing to %s node link",
+                               link->node->name);
+                serialLinkIOError(link);
             }
         }
     }
@@ -401,13 +408,12 @@ void serialWriteHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
 
 void serialReadHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
     serialLink *link = (serialLink*) privdata;
-    int nread = read(link->fd, &link->recvbuf, BUFSIZ);
 
+    int nread = read(link->fd, &link->recvbuf, BUFSIZ);
     if (nread <= 0) {
-        serverLog(LL_DEBUG,"I/O error reading from node link: %s",
-            (nread == 0) ? "connection closed" : strerror(errno));
-        handleLinkIOError(link);
-        return;
+        serverLogErrno(LL_DEBUG, "I/O error reading from %s node link: %s",
+                       link->node->name);
+        serialLinkIOError(link);
     }
 
     link->recvbuflen = nread;
@@ -415,7 +421,6 @@ void serialReadHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
 
 int serialAddNode(serialNode *node) {
     int j;
-
     for (j = 0; j < server.serial->size; j++) {
         if (server.serial->nodes[j] == node) {
             return C_ERR;
@@ -429,9 +434,8 @@ int serialAddNode(serialNode *node) {
     return C_OK;
 }
 
-void serialDelNode(serialNode *delnode) {
+int serialDelNode(serialNode *delnode) {
     int j;
-
     for (j = 0; j < server.serial->size; j++) {
         if (server.serial->nodes[j] == delnode) {
             if ((j+1) < server.serial->size) {
@@ -440,9 +444,11 @@ void serialDelNode(serialNode *delnode) {
                     (sizeof(*server.serial->nodes)*remaining_nodes));
             }
             server.serial->size--;
-            return;
+            return C_OK;
         }
     }
+
+    return C_ERR;
 }
 
 void serialTerm(void) {
@@ -455,20 +461,20 @@ void serialTerm(void) {
             serverLog(LL_DEBUG, "Closing virtual: %s", vnode->name);
 
             if (vnode->link) {
-                freeSerialLink(vnode->link);
+                serialFreeLink(vnode->link);
             }
 
-            freeSerialNode(vnode);
+            serialFreeNode(vnode);
         }
 
         serverLog(LL_DEBUG, "Closing serial: %s", node->name);
 
         if (node->link) {
-            freeSerialLink(node->link);
+            serialFreeLink(node->link);
         }
 
         serialDelNode(node);
-        freeSerialNode(node);
+        serialFreeNode(node);
     }
 
     free(server.serial->nodes);
