@@ -14,10 +14,12 @@
 #include <sys/time.h>
 #include <time.h>
 
-/* Global vars */
+#define DATETIME_BUF_SIZE (64)
+
 struct sproxyServer server;
 
-static void sigShutdownHandler(int sig) {
+static void sigShutdownHandler(int sig)
+{
     switch (sig) {
         case SIGINT:
         case SIGTERM:
@@ -37,7 +39,8 @@ static void sigShutdownHandler(int sig) {
     server.shutdown = 1;
 }
 
-void setupSignalHandlers(void) {
+void setupSignalHandlers(void)
+{
     struct sigaction act;
 
     /* When the SA_SIGINFO flag is set in sa_flags then sa_sigaction is used.
@@ -49,7 +52,8 @@ void setupSignalHandlers(void) {
     sigaction(SIGINT, &act, NULL);
 }
 
-int prepareForShutdown() {
+int prepareForShutdown()
+{
     serverLog(LL_WARNING,"User requested shutdown...");
 
     /* Remove the pid file if possible and needed. */
@@ -60,7 +64,8 @@ int prepareForShutdown() {
     return C_OK;
 }
 
-int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
+int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData)
+{
     if (server.shutdown) {
         if (prepareForShutdown() == C_OK) {
             aeStop(eventLoop);
@@ -79,7 +84,8 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     return 1000/server.hz;
 }
 
-void serverInitConfig(void) {
+void serverInitConfig(void)
+{
     server.pid = getpid();
     server.configfile = NULL;
     server.pidfile = NULL;
@@ -88,15 +94,26 @@ void serverInitConfig(void) {
     server.daemonize = CONFIG_DEFAULT_DAEMONIZE;
     server.verbosity = CONFIG_DEFAULT_VERBOSITY;
     server.syslog = CONFIG_DEFAULT_SYSLOG_ENABLED;
-    server.logfile = strdup(CONFIG_DEFAULT_LOGFILE);
     server.maxclients = CONFIG_DEFAULT_MAX_CLIENTS;
-    server.hz = CONFIG_DEFAULT_HZ;
     server.el = aeCreateEventLoop(server.maxclients);
-    server.serial_configfile = strdup(CONFIG_DEFAULT_SERIAL_CONFIG_FILE);
     server.cron_event_id = AE_ERR;
+    server.hz = CONFIG_DEFAULT_HZ;
+
+    server.logfile = strdup(CONFIG_DEFAULT_LOGFILE);
+    if (!server.logfile) {
+        serverLog(LL_ERROR, "strdup failed");
+        exit(1);
+    }
+
+    server.serial_configfile = strdup(CONFIG_DEFAULT_SERIAL_CONFIG_FILE);
+    if (!server.serial_configfile) {
+        serverLog(LL_ERROR, "strdup failed");
+        exit(1);
+    }
 }
 
-void serverInit(void) {
+void serverInit(void)
+{
     signal(SIGHUP, SIG_IGN);
     signal(SIGPIPE, SIG_IGN);
     setupSignalHandlers();
@@ -111,54 +128,77 @@ void serverInit(void) {
     serialInit();
 }
 
-void serverTerm(void) {
+void serverTerm(void)
+{
     serialTerm();
 
-    if (server.logfile) free(server.logfile);
-    if (server.pidfile) free(server.pidfile);
-    if (server.configfile) free(server.configfile);
-    if (server.serial_configfile) free(server.serial_configfile);
+    free(server.logfile);
+    server.logfile = NULL;
+    free(server.pidfile);
+    server.pidfile = NULL;
+    free(server.configfile);
+    server.configfile = NULL;
+    free(server.serial_configfile);
+    server.serial_configfile = NULL;
 
     if (aeDeleteTimeEvent(server.el, server.cron_event_id) == AE_ERR) {
         serverLog(LL_WARNING, "Failed removing event loop timers.");
     }
+
+    server.cron_event_id = AE_ERR;
 }
 
-void version(void) {
+void version(void)
+{
     printf("Sproxy server v=%s\n", SPROXY_VERSION);
     exit(0);
 }
 
-void daemonize(void) {
+void daemonize(void)
+{
     int fd;
 
-    if (fork() != 0) exit(0); /* parent exits */
-    setsid(); /* create a new session */
+    if (fork() != 0) {
+        exit(0);
+    }
+    setsid();
 
     /* Every output goes to /dev/null. If sproxyd is daemonized but
      * the 'logfile' is set to 'stdout' in the configuration file
      * it will not log at all. */
-    if ((fd = open("/dev/null", O_RDWR, 0)) != -1) {
+    fd = open("/dev/null", O_RDWR, 0);
+    if (fd != -1) {
         dup2(fd, STDIN_FILENO);
         dup2(fd, STDOUT_FILENO);
         dup2(fd, STDERR_FILENO);
-        if (fd > STDERR_FILENO) close(fd);
+        if (fd > STDERR_FILENO) {
+            close(fd);
+        }
     }
 }
 
-void createPidFile(void) {
+void createPidFile(void)
+{
+    FILE *fp = NULL;
+
     if (server.pidfile) {
-        server.pidfile = strdup(CONFIG_DEFAULT_PID_FILE); /* TODO memory */
+        server.pidfile = strdup(CONFIG_DEFAULT_PID_FILE);
+        if (!server.pidfile) {
+            serverLog(LL_ERROR, "strdup failed");
+            exit(1);
+        }
     }
+
     /* Try to write the pid file in a best-effort way. */
-    FILE *fp = fopen(server.pidfile, "w");
+    fp = fopen(server.pidfile, "w");
     if (fp) {
         fprintf(fp, "%d\n", (int)getpid());
         fclose(fp);
     }
 }
 
-void usage(void) {
+void usage(void)
+{
     fprintf(stderr,
         "\n"
 		"Usage: sproxyd [OPTIONS]\n\n"
@@ -171,40 +211,68 @@ void usage(void) {
     exit(1);
 }
 
-void serverBeforeSleep(struct aeEventLoop *eventLoop) {
+void serverBeforeSleep(struct aeEventLoop *eventLoop)
+{
     serialBeforeSleep();
 }
 
-void serverLogRaw(int level, const char *msg) {
-    const int syslogLevelMap[] = { LOG_DEBUG, LOG_INFO, LOG_NOTICE, LOG_WARNING, LOG_ERR };
-    const char* standardLevelMap[] = { "DEBUG", "INFO", "NOTICE", "WARN", "ERROR" };
-    FILE *fp;
-    char buf[64];
-    int log_to_stdout = server.logfile[0] == '\0';
+void serverLogRaw(int level, const char *msg)
+{
+    static const int syslogLevelMap[] = {
+        LOG_DEBUG,
+        LOG_INFO,
+        LOG_NOTICE,
+        LOG_WARNING,
+        LOG_ERR
+    };
+    static const char* standardLevelMap[] = {
+        "DEBUG",
+        "INFO",
+        "NOTICE",
+        "WARN",
+        "ERROR"
+    };
+    FILE *fp = NULL;
+    char datetime_buf[DATETIME_BUF_SIZE] = {0};
+    int offset;
+    struct timeval tv = {0};
 
-    level &= 0xff; /* clear flags */
-    if (level < server.verbosity) return;
+    if (level < server.verbosity) {
+        return;
+    }
 
-    fp = log_to_stdout ? stdout : fopen(server.logfile, "a");
-    if (!fp) return;
+    fp = !server.logfile[0] ? stdout : fopen(server.logfile, "a");
+    if (!fp) {
+        return;
+    }
 
-    int off;
-    struct timeval tv;
-    gettimeofday(&tv,NULL);
-    off = strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S.", localtime(&tv.tv_sec));
-    snprintf(buf+off, sizeof(buf)-off, "%03d", (int)tv.tv_usec/1000);
-    fprintf(fp, "%s %s %s\n", buf, standardLevelMap[level], msg);
+    if (gettimeofday(&tv, NULL) != 0) {
+        return;
+    }
+
+    strftime(datetime_buf, sizeof(datetime_buf),
+             "%Y-%m-%d %H:%M:%S.", localtime(&tv.tv_sec));
+
+    fprintf(fp, "%s %s %s\n", datetime_buf, standardLevelMap[level], msg);
     fflush(fp);
 
-    if (!log_to_stdout) fclose(fp);
-    if (server.syslog) syslog(syslogLevelMap[level], "%s", msg);
+    if (server.logfile[0]) {
+        fclose(fp);
+    }
+
+    if (server.syslog) {
+        syslog(syslogLevelMap[level], "%s", msg);
+    }
 }
 
-void serverLog(int level, const char *fmt, ...) {
+void serverLog(int level, const char *fmt, ...)
+{
     va_list ap;
-    char msg[LOG_MAX_LEN];
+    char msg[LOG_MAX_LEN] = {0};
 
-    if ((level&0xff) < server.verbosity) return;
+    if (level < server.verbosity) {
+        return;
+    }
 
     va_start(ap, fmt);
     vsnprintf(msg, sizeof(msg), fmt, ap);
@@ -213,12 +281,15 @@ void serverLog(int level, const char *fmt, ...) {
     serverLogRaw(level, msg);
 }
 
-void serverLogErrno(int level, const char *fmt, ...) {
+void serverLogErrno(int level, const char *fmt, ...)
+{
     va_list ap;
-    char msg[LOG_MAX_LEN];
+    char msg[LOG_MAX_LEN] = {0};
     char *diag_fmt = "%s, Error: %s (%d)";
 
-    if ((level&0xff) < server.verbosity) return;
+    if (level < server.verbosity) {
+        return;
+    }
 
     va_start(ap, fmt);
     vsnprintf(msg, sizeof(msg), fmt, ap);
@@ -227,10 +298,12 @@ void serverLogErrno(int level, const char *fmt, ...) {
     serverLog(level, diag_fmt, msg, strerror(errno), errno);
 }
 
-int main(int argc, char *argv[]) {
+int main(int argc, char *argv[])
+{
+    int c;
+
     serverInitConfig();
 
-    int c;
     while ((c = getopt(argc, argv, "c:dvh")) != -1) {
         switch (c) {
             case 'c':
@@ -241,6 +314,7 @@ int main(int argc, char *argv[]) {
                 break;
             case 'v':
                 version();
+                break;
 			case 'h':
             default:
                 usage();

@@ -1,14 +1,16 @@
-#ifndef __SERIAL_H
-#define __SERIAL_H
+#ifndef SERIAL_H
+#define SERIAL_H
 
-#define SERIAL_OK 0               /* Everything looks ok */
-#define SERIAL_FAIL 1             /* The serial is not working */
-#define SERIAL_NAMELEN 40
+#include <linux/limits.h>
+
+/* Serial state */
+#define SERIAL_OK      (0)  /* Everything looks ok */
+#define SERIAL_FAIL    (1)  /* The serial device is not working */
 
 /* Serial flags */
-#define SERIAL_NODE_MASTER 1      /* The node is a master */
-#define SERIAL_NODE_VIRTUAL 2     /* The node is a virtual */
-#define SERIAL_NODE_FAIL 3        /* The node is believed to be malfunctioning */
+#define SERIAL_NODE_MASTER  (1) /* The node is a master */
+#define SERIAL_NODE_VIRTUAL (2) /* The node is a virtual */
+#define SERIAL_NODE_FAIL    (3) /* The node is believed to be malfunctioning */
 
 #define nodeIsMaster(n) ((n)->flags & SERIAL_NODE_MASTER)
 #define nodeIsVirtual(n) ((n)->flags & SERIAL_NODE_VIRTUAL)
@@ -25,7 +27,7 @@ typedef struct serialLink {
 } serialLink;
 
 typedef struct serialNode {
-    char name[SERIAL_NAMELEN];    /* Path to device (/dev/ttyS1) */
+    char name[PATH_MAX];          /* Path to device (/dev/ttyS1) */
     int flags;
     struct serialNode **virtuals; /* Pointers to virtuals */
     struct serialNode *virtualof; /* Pointer to master (can be null) */

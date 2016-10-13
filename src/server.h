@@ -1,5 +1,5 @@
-#ifndef __SPROXY_H
-#define __SPROXY_H
+#ifndef SERVER_H
+#define SERVER_H
 
 #include "ae.h"
 
@@ -10,37 +10,38 @@
 #include <stdlib.h>
 
 /* Error codes */
-#define C_OK  0
-#define C_ERR -1
-
-/* Static server configuration */
-#define LOG_MAX_LEN 1024
-#define CONFIG_DEFAULT_HZ 10
-#define CONFIG_MIN_HZ     1
-#define CONFIG_MAX_HZ     500
-#define CONFIG_DEFAULT_PID_FILE "/var/run/sproxyd.pid"
-#define CONFIG_DEFAULT_DAEMONIZE 0
-#define CONFIG_DEFAULT_LOGFILE ""
-#define CONFIG_DEFAULT_SYSLOG_ENABLED 0
-#define CONFIG_SP_MAX 4
-#define CONFIG_DEFAULT_MAX_CLIENTS 1000
-#define CONFIG_DEFAULT_SERIAL_CONFIG_FILE "serial.ini"
-#define CONFIG_MAX_LINE 1024
+#define C_OK  (0)
+#define C_ERR (-1)
 
 /* Log levels */
-#define LL_DEBUG 0
-#define LL_VERBOSE 1
-#define LL_NOTICE 2
-#define LL_WARNING 3
-#define LL_ERROR 4
-#define CONFIG_DEFAULT_VERBOSITY LL_DEBUG
+#define LL_DEBUG   (0)
+#define LL_VERBOSE (1)
+#define LL_NOTICE  (2)
+#define LL_WARNING (3)
+#define LL_ERROR   (4)
+
+#define LOG_MAX_LEN                       (1024)
+
+/* Static server configuration */
+#define CONFIG_DEFAULT_HZ                 (10)
+#define CONFIG_MIN_HZ                     (1)
+#define CONFIG_MAX_HZ                     (500)
+#define CONFIG_DEFAULT_PID_FILE           ("/var/run/sproxyd.pid")
+#define CONFIG_DEFAULT_DAEMONIZE          (0)
+#define CONFIG_DEFAULT_LOGFILE            ("")
+#define CONFIG_DEFAULT_SYSLOG_ENABLED     (0)
+#define CONFIG_SP_MAX                     (4)
+#define CONFIG_DEFAULT_MAX_CLIENTS        (1000)
+#define CONFIG_DEFAULT_SERIAL_CONFIG_FILE ("serial.ini")
+#define CONFIG_MAX_LINE                   (1024)
+#define CONFIG_DEFAULT_VERBOSITY          (LL_ERROR)
 
 /* Convert milliseconds to cronloops based on server HZ value */
 #define run_with_period(_ms_) if ((_ms_ <= 1000/server.hz) || \
-        !(server.cronloops%((_ms_)/(1000/server.hz))))
+    !(server.cronloops%((_ms_)/(1000/server.hz))))
 
 struct sproxyServer {
-    pid_t pid;                  /* Main process pid.*/
+    pid_t pid;                  /* Main process PID*/
     char *pidfile;              /* PID file path */
     char *logfile;              /* Log file */
     char *configfile;           /* System config file */
@@ -57,14 +58,7 @@ struct sproxyServer {
     struct serialState *serial; /* State of serial devices */
 };
 
-/*
- * Extern declarations
- */
 extern struct sproxyServer server;
-
-/*
- * Server
- */
 
 /**
  * @brief Logging helper that accepts a formatted string and any number of
@@ -99,10 +93,6 @@ void serverLogErrno(int level, const char *fmt, ...);
  * @param[in] filename File name containing server configuration
  */
 void serverLoadConfig(const char *filename);
-
-/*
- * Serial
- */
 
 /**
  * @brief Set serial default configuration and load overrides from file.
