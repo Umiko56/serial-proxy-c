@@ -1,6 +1,5 @@
 #include "server.h"
 #include "ae.h"
-#include "cconfig.h"
 #include "config.h"
 
 #include <unistd.h>
@@ -18,38 +17,53 @@
 
 struct sproxyServer server;
 
-static void sigShutdownHandler(int sig)
+static void sigHandler(int sig)
 {
     switch (sig) {
         case SIGINT:
         case SIGTERM:
+            /* SIGINT is often delivered via Ctrl+C in an interactive session.
+             * If we receive the signal the second time, we interpret this as
+             * the user really wanting to quit ASAP without waiting to persist
+             * on disk. */
+            if (server.shutdown && sig == SIGINT) {
+                exit(1); /* Exit with an error since this was not a clean shutdown. */
+            }
+
+            server.shutdown = 1;
+            break;
+        case SIGHUP:
+            server.reload = 1;
             break;
         default:
             return;
     };
-
-    /* SIGINT is often delivered via Ctrl+C in an interactive session.
-     * If we receive the signal the second time, we interpret this as
-     * the user really wanting to quit ASAP without waiting to persist
-     * on disk. */
-    if (server.shutdown && sig == SIGINT) {
-        exit(1); /* Exit with an error since this was not a clean shutdown. */
-    }
-
-    server.shutdown = 1;
 }
 
 void setupSignalHandlers(void)
 {
-    struct sigaction act;
+    struct sigaction act = {0};
 
     /* When the SA_SIGINFO flag is set in sa_flags then sa_sigaction is used.
      * Otherwise, sa_handler is used. */
     sigemptyset(&act.sa_mask);
     act.sa_flags = 0;
-    act.sa_handler = sigShutdownHandler;
-    sigaction(SIGTERM, &act, NULL);
-    sigaction(SIGINT, &act, NULL);
+    act.sa_handler = sigHandler;
+
+    if (sigaction(SIGTERM, &act, NULL) != 0) {
+        serverLogErrno(LL_ERROR, "sigaction(SIGTERM) failed");
+        exit(1);
+    }
+
+    if (sigaction(SIGINT, &act, NULL) != 0) {
+        serverLogErrno(LL_ERROR, "sigaction(SIGINT) failed");
+        exit(1);
+    }
+
+    if (sigaction(SIGHUP, &act, NULL) != 0) {
+        serverLogErrno(LL_ERROR, "sigaction(SIGHUP) failed");
+        exit(1);
+    }
 }
 
 int prepareForShutdown()
@@ -76,7 +90,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData)
         }
     }
 
-    run_with_period(1000) {
+    run_with_period(server.reconnect_interval) {
         serialCron();
     }
 
@@ -98,6 +112,7 @@ void serverInitConfig(void)
     server.el = aeCreateEventLoop(server.maxclients);
     server.cron_event_id = AE_ERR;
     server.hz = CONFIG_DEFAULT_HZ;
+    server.reconnect_interval = CONFIG_DEFAULT_RECONNECT_INTERVAL_MS;
 
     server.logfile = strdup(CONFIG_DEFAULT_LOGFILE);
     if (!server.logfile) {
@@ -251,7 +266,7 @@ void serverLogRaw(int level, const char *msg)
     }
 
     strftime(datetime_buf, sizeof(datetime_buf),
-             "%Y-%m-%d %H:%M:%S.", localtime(&tv.tv_sec));
+             "%Y-%m-%d %H:%M:%S", localtime(&tv.tv_sec));
 
     fprintf(fp, "%s %s %s\n", datetime_buf, standardLevelMap[level], msg);
     fflush(fp);
@@ -285,7 +300,7 @@ void serverLogErrno(int level, const char *fmt, ...)
 {
     va_list ap;
     char msg[LOG_MAX_LEN] = {0};
-    char *diag_fmt = "%s, Error: %s (%d)";
+    const char *diag_fmt = "%s, Error: %s (%d)";
 
     if (level < server.verbosity) {
         return;
@@ -333,7 +348,7 @@ int main(int argc, char *argv[])
 
     serverInit();
 
-    serverLog(LL_NOTICE,"Server started, Sproxy version " SPROXY_VERSION);
+    serverLog(LL_NOTICE,"Server started, sproxy version " SPROXY_VERSION);
 
     aeSetBeforeSleepProc(server.el, serverBeforeSleep);
     aeMain(server.el);

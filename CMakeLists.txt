@@ -13,8 +13,8 @@ message( "MINOR: ${PACKAGE_MINOR}" )
 message( "PATCH: ${PACKAGE_PATCH}" )
 
 configure_file(
-    "${PROJECT_SOURCE_DIR}/cconfig.h.in"
-    "${PROJECT_BINARY_DIR}/cconfig.h"
+    "${PROJECT_SOURCE_DIR}/config.h.in"
+    "${PROJECT_BINARY_DIR}/config.h"
 )
 
 add_subdirectory( bin )

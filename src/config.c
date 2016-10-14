@@ -3,6 +3,7 @@
 #include "serial.h"
 #include "ini.h"
 
+#include <limits.h>
 #include <linux/limits.h>
 
 #define MATCH(s, n) (strcmp(section, s) == 0 && strcmp(name, n) == 0)
@@ -65,6 +66,14 @@ static int serverConfigHandler(void* user,
         server->hz = atoi(value);
         if (server->hz < CONFIG_MIN_HZ) server->hz = CONFIG_MIN_HZ;
         if (server->hz > CONFIG_MAX_HZ) server->hz = CONFIG_MAX_HZ;
+    } else if (MATCH("system", "reconnect-interval")) {
+        server->reconnect_interval = atoi(value);
+        if (server->reconnect_interval < CONFIG_MIN_RECONNECT_INTERVAL_MS) {
+            server->reconnect_interval = CONFIG_MIN_RECONNECT_INTERVAL_MS;
+        }
+        if (server->reconnect_interval > CONFIG_MAX_RECONNECT_INTERVAL_MS) {
+            server->reconnect_interval = CONFIG_MAX_RECONNECT_INTERVAL_MS;
+        }
     } else if (MATCH("system", "pidfile")) {
         server->pidfile = strdup(value);
         if (!server->pidfile) {
@@ -102,19 +111,16 @@ static int serialConfigHandler(void* user,
                                const char* value)
 {
     struct sproxyServer *server = (struct sproxyServer*)user;
-    serialNode *node = NULL;
+    serialNode *node;
+    serialNode *vnode;
     int j;
 
     /* check if serial port has been added */
-    for (j = 0; j < server->serial->size; j++) {
-        if (strcmp(server->serial->nodes[j]->name, section) == 0) {
-            node = server->serial->nodes[j];
-        }
-    }
+    node = serialGetNode(section);
 
     /* not found, create */
-    if (node == NULL) {
-        node = serialCreateNode(section, SERIAL_NODE_MASTER);
+    if (!node) {
+        node = serialCreateNode(section, SERIAL_FLAG_MASTER);
         serialAddNode(node);
     }
 
@@ -123,7 +129,7 @@ static int serialConfigHandler(void* user,
     } else if (N_MATCH("virtuals")) {
         char *str;
         char *token;
-        char buf[PATH_MAX];
+        char virtual_name[PATH_MAX];
         serialNode *vnode;
         int n;
 
@@ -136,14 +142,18 @@ static int serialConfigHandler(void* user,
         token = strtok(str, " ");
 
         while (token != NULL) {
-            n = snprintf(buf, sizeof(buf), "%s.%s", section, token);
-            if (!(n > -1 && n < sizeof(buf))) {
+            n = snprintf(virtual_name, sizeof(virtual_name),
+                         "%s.%s", section, token);
+            if (!(n > -1 && n < sizeof(virtual_name))) {
                 fprintf(stderr, "Can't set virtual: %s\n", token);
                 exit(1);
             }
 
-            vnode = serialCreateNode(buf, SERIAL_NODE_VIRTUAL);
-            serialNodeAddVirtual(node, vnode);
+            vnode = serialGetVirtualNode(node, virtual_name);
+            if (!vnode) {
+                vnode = serialCreateNode(virtual_name, SERIAL_FLAG_VIRTUAL);
+                serialAddVirtualNode(node, vnode);
+            }
 
             token = strtok(NULL, " ");
         }

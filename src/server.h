@@ -2,6 +2,7 @@
 #define SERVER_H
 
 #include "ae.h"
+#include "serial.h"
 
 #include <sys/types.h>
 #include <errno.h>
@@ -20,25 +21,29 @@
 #define LL_WARNING (3)
 #define LL_ERROR   (4)
 
-#define LOG_MAX_LEN                       (1024)
+#define LOG_MAX_LEN (1024)
 
 /* Static server configuration */
-#define CONFIG_DEFAULT_HZ                 (10)
-#define CONFIG_MIN_HZ                     (1)
-#define CONFIG_MAX_HZ                     (500)
-#define CONFIG_DEFAULT_PID_FILE           ("/var/run/sproxyd.pid")
-#define CONFIG_DEFAULT_DAEMONIZE          (0)
-#define CONFIG_DEFAULT_LOGFILE            ("")
-#define CONFIG_DEFAULT_SYSLOG_ENABLED     (0)
-#define CONFIG_SP_MAX                     (4)
-#define CONFIG_DEFAULT_MAX_CLIENTS        (1000)
-#define CONFIG_DEFAULT_SERIAL_CONFIG_FILE ("serial.ini")
-#define CONFIG_MAX_LINE                   (1024)
-#define CONFIG_DEFAULT_VERBOSITY          (LL_ERROR)
+#define CONFIG_DEFAULT_HZ                    (10)
+#define CONFIG_MIN_HZ                        (1)
+#define CONFIG_MAX_HZ                        (500)
+#define CONFIG_DEFAULT_PID_FILE              ("/var/run/sproxyd.pid")
+#define CONFIG_DEFAULT_DAEMONIZE             (0)
+#define CONFIG_DEFAULT_LOGFILE               ("")
+#define CONFIG_DEFAULT_SYSLOG_ENABLED        (0)
+#define CONFIG_DEFAULT_MAX_CLIENTS           (1000)
+#define CONFIG_DEFAULT_VERBOSITY             (LL_ERROR)
+#define CONFIG_DEFAULT_RECONNECT_INTERVAL_MS (5000)
+#define CONFIG_MIN_RECONNECT_INTERVAL_MS     (1000)
+#define CONFIG_MAX_RECONNECT_INTERVAL_MS     (3600000) /* 24 hours */
+#define CONFIG_DEFAULT_SERIAL_CONFIG_FILE    ("serial.ini")
 
 /* Convert milliseconds to cronloops based on server HZ value */
 #define run_with_period(_ms_) if ((_ms_ <= 1000/server.hz) || \
     !(server.cronloops%((_ms_)/(1000/server.hz))))
+
+#define strlcpy(dst, src, size) \
+    (snprintf(dst, size, "%s", src))
 
 struct sproxyServer {
     pid_t pid;                  /* Main process PID*/
@@ -46,16 +51,19 @@ struct sproxyServer {
     char *logfile;              /* Log file */
     char *configfile;           /* System config file */
     int shutdown;               /* Signal to shutdown */
+    int reload;                 /* Signal to reload config */
     int daemonize;              /* True if running as a daemon */
     int verbosity;              /* Logging level */
     int syslog;                 /* Is syslog enabled? */
     int maxclients;             /* Max concurrent clients */
     int cronloops;              /* Number of times the cron function run */
+    int reconnect_interval;     /* Number of milliseconds to wait before
+                                   reconnecting serial devices */
     long long cron_event_id;    /* Cron task id */
     aeEventLoop *el;
     int hz;                     /* Timer event frequency */
     char *serial_configfile;    /* Serial config file */
-    struct serialState *serial; /* State of serial devices */
+    struct serialState serial;  /* State of serial devices */
 };
 
 extern struct sproxyServer server;
@@ -64,33 +72,33 @@ extern struct sproxyServer server;
  * @brief Logging helper that accepts a formatted string and any number of
  *        arguments to fill it.
  *
- * @param[in] level Logging level of message
- * @param[in] fmt String to substitute with given variable arguments
- * @param[in] ... Variable arguments
+ * @param[in] level - Logging level of message
+ * @param[in] fmt - String to substitute with given variable arguments
+ * @param[in] ... - Variable arguments
  */
 void serverLog(int level, const char *fmt, ...);
 
 /**
  * @brief Logging helper to print given message.
  *
- * @param[in] level Logging level of message
- * @param[in] msg Message to log
+ * @param[in] level - Logging level of message
+ * @param[in] msg - Message to log
  */
 void serverLogRaw(int level, const char *msg);
 
 /**
  * @brief Logging helper to print errno diagnostics.
  *
- * @param[in] level Logging level of message
- * @param[in] fmt String to substitute with given variable arguments
- * @param[in] ... Variable arguments
+ * @param[in] level - Logging level of message
+ * @param[in] fmt - String to substitute with given variable arguments
+ * @param[in] ... - Variable arguments
  */
 void serverLogErrno(int level, const char *fmt, ...);
 
 /**
  * @brief Load server configuration from given file.
  *
- * @param[in] filename File name containing server configuration
+ * @param[in] filename - File name containing server configuration
  */
 void serverLoadConfig(const char *filename);
 
@@ -119,7 +127,7 @@ void serialCron(void);
 /**
  * @brief Load serial configuration from given file.
  *
- * @param[in] filename File name containing serial configuration
+ * @param[in] filename - File name containing serial configuration
  */
 void serialLoadConfig(const char *filename);
 

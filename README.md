@@ -58,6 +58,7 @@ Example:
     pidfile = /var/run/sproxyd.pid
     serial-configfile = /etc/serial-proxy/serial.ini
     hz = 10
+    reconnect-interval = 5000
 
 2. serial.ini - serial port configuration. Set via system configuration file
    using `serial-configfile`. Default: `serial.ini`. The serial port device
