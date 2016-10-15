@@ -6,24 +6,58 @@
 #include <limits.h>
 #include <linux/limits.h>
 
-#define MATCH(s, n) (strcmp(section, s) == 0 && strcmp(name, n) == 0)
-#define N_MATCH(n) (strcmp(name, n) == 0)
+#define MATCH(s, n) (strcasecmp(section, s) == 0 && strcasecmp(name, n) == 0)
+#define N_MATCH(n) (strcasecmp(name, n) == 0)
 
-typedef struct configEnum {
-    const char *name;
-    const int val;
-} configEnum;
+/**
+ * @brief Convert string "yes" to 1 and "no" to 0.
+ *
+ * @param[in] s - String to convert
+ *
+ * @return 1 if yes, 0 if no or -1 if neither
+ */
+static int _yesnotoi(const char *s);
 
-configEnum loglevel_enum[] = {
-    {"debug", LL_DEBUG},
-    {"verbose", LL_VERBOSE},
-    {"notice", LL_NOTICE},
-    {"warning", LL_WARNING},
-    {"error", LL_ERROR},
-    {NULL, 0}
-};
+/**
+ * @brief Convert log name string to log level int.
+ *
+ * @param[in] name - Log name string
+ *
+ * @return Log level of name (if found) otherwise LL_ERROR
+ */
+static int _getLogLevel(const char *name);
 
-int yesnotoi(const char *s)
+/**
+ * @brief Server device configuration file callback.
+ *
+ * @param[in] user - User data
+ * @param[in] section - ini section
+ * @param[in] name - configuration key
+ * @param[in] value - configuration value
+ *
+ * @return 1 if configuration is valid, 0 if not
+ */
+static int _serverConfigHandler(void* user,
+                                const char* section,
+                                const char* name,
+                                const char* value);
+
+/**
+ * @brief Serial device configuration file callback.
+ *
+ * @param[in] user - User data
+ * @param[in] section - ini section (device name)
+ * @param[in] name - configuration key
+ * @param[in] value - configuration value
+ *
+ * @return 1 if configuration is valid, 0 if not
+ */
+static int _serialConfigHandler(void* user,
+                                const char* section,
+                                const char* name,
+                                const char* value);
+
+static int _yesnotoi(const char *s)
 {
     if (!strcasecmp(s, "yes")) {
         return 1;
@@ -34,21 +68,29 @@ int yesnotoi(const char *s)
     }
 }
 
-int configEnumGetValue(configEnum *ce, const char *name)
+static int _getLogLevel(const char *name)
 {
-    while(ce->name != NULL) {
-        if (!strcasecmp(ce->name, name)) {
-            return ce->val;
-        }
-        ce++;
+    int level = LL_ERROR;
+
+    if (!name) {
+        goto done;
     }
-    return INT_MIN;
+
+    if (!strcasecmp(name, "debug")) {
+        level = LL_DEBUG;
+    } else if (!strcasecmp(name, "info")) {
+        level = LL_INFO;
+    } else if (!strcasecmp(name, "warn")) {
+        level = LL_WARN;
+    }
+done:
+    return level;
 }
 
-static int serverConfigHandler(void* user,
-                               const char* section,
-                               const char* name,
-                               const char* value)
+static int _serverConfigHandler(void* user,
+                                const char* section,
+                                const char* name,
+                                const char* value)
 {
     struct sproxyServer *server = (struct sproxyServer*)user;
 
@@ -59,9 +101,9 @@ static int serverConfigHandler(void* user,
             exit(1);
         }
     } else if (MATCH("logging", "syslog-enabled")) {
-        server->syslog = yesnotoi(value);
+        server->syslog = _yesnotoi(value);
     } else if (MATCH("logging", "loglevel")) {
-        server->verbosity = configEnumGetValue(loglevel_enum, value);
+        server->verbosity = _getLogLevel(value);
     } else if (MATCH("system", "hz")) {
         server->hz = atoi(value);
         if (server->hz < CONFIG_MIN_HZ) server->hz = CONFIG_MIN_HZ;
@@ -99,16 +141,16 @@ static int serverConfigHandler(void* user,
 
 void serverLoadConfig(const char *filename)
 {
-    if (filename && ini_parse(filename, serverConfigHandler, &server) < 0) {
+    if (filename && ini_parse(filename, _serverConfigHandler, &server) < 0) {
         fprintf(stderr, "Can't load config file: %s\n", filename);
         exit(1);
     }
 }
 
-static int serialConfigHandler(void* user,
-                               const char* section,
-                               const char* name,
-                               const char* value)
+static int _serialConfigHandler(void* user,
+                                const char* section,
+                                const char* name,
+                                const char* value)
 {
     struct sproxyServer *server = (struct sproxyServer*)user;
     serialNode *node;
@@ -173,7 +215,7 @@ void serialLoadConfig(const char *filename)
         exit(1);
     }
 
-    if (ini_parse(filename, serialConfigHandler, &server) < 0) {
+    if (ini_parse(filename, _serialConfigHandler, &server) < 0) {
         fprintf(stderr, "Can't load serial config file: %s\n", filename);
         exit(1);
     }

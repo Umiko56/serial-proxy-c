@@ -17,30 +17,44 @@
 
 struct sproxyServer server;
 
-static void sigHandler(int sig)
+/**
+ * @brief Handle registered signals.
+ *
+ * @param[in] sig - Signal number
+ */
+static void _sigHandler(int sig);
+
+/**
+ * @brief Register signals.
+ */
+static void _setupSignalHandlers(void);
+
+/**
+ * @brief Cleanup and unregister event loop.
+ */
+static void _prepareForShutdown();
+
+static void _sigHandler(int sig)
 {
     switch (sig) {
         case SIGINT:
         case SIGTERM:
-            /* SIGINT is often delivered via Ctrl+C in an interactive session.
-             * If we receive the signal the second time, we interpret this as
-             * the user really wanting to quit ASAP without waiting to persist
-             * on disk. */
-            if (server.shutdown && sig == SIGINT) {
-                exit(1); /* Exit with an error since this was not a clean shutdown. */
-            }
-
-            server.shutdown = 1;
-            break;
-        case SIGHUP:
-            server.reload = 1;
             break;
         default:
             return;
     };
+
+    /* SIGINT is often delivered via Ctrl+C in an interactive session.
+     * If we receive the signal the second time, we interpret this as
+     * the user really wanting to quit ASAP without cleaning up. */
+    if (server.shutdown && sig == SIGINT) {
+        exit(1); /* Exit with an error since this was not a clean shutdown. */
+    }
+
+    server.shutdown = 1;
 }
 
-void setupSignalHandlers(void)
+static void _setupSignalHandlers(void)
 {
     struct sigaction act = {0};
 
@@ -48,7 +62,7 @@ void setupSignalHandlers(void)
      * Otherwise, sa_handler is used. */
     sigemptyset(&act.sa_mask);
     act.sa_flags = 0;
-    act.sa_handler = sigHandler;
+    act.sa_handler = _sigHandler;
 
     if (sigaction(SIGTERM, &act, NULL) != 0) {
         serverLogErrno(LL_ERROR, "sigaction(SIGTERM) failed");
@@ -59,35 +73,23 @@ void setupSignalHandlers(void)
         serverLogErrno(LL_ERROR, "sigaction(SIGINT) failed");
         exit(1);
     }
-
-    if (sigaction(SIGHUP, &act, NULL) != 0) {
-        serverLogErrno(LL_ERROR, "sigaction(SIGHUP) failed");
-        exit(1);
-    }
 }
 
-int prepareForShutdown()
+static void _prepareForShutdown()
 {
-    serverLog(LL_WARNING,"User requested shutdown...");
+    serverLog(LL_INFO,"Shutting down...");
 
     /* Remove the pid file if possible and needed. */
     if (server.daemonize || server.pidfile) {
         unlink(server.pidfile);
     }
-
-    return C_OK;
 }
 
 int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData)
 {
     if (server.shutdown) {
-        if (prepareForShutdown() == C_OK) {
-            aeStop(eventLoop);
-        } else {
-            serverLog(LL_WARNING, "SIGTERM received but errors trying to shut "
-                      "down the server, check the logs for more information");
-            server.shutdown = 0;
-        }
+        _prepareForShutdown();
+        aeStop(eventLoop);
     }
 
     run_with_period(server.reconnect_interval) {
@@ -101,6 +103,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData)
 void serverInitConfig(void)
 {
     server.pid = getpid();
+    server.logfile = NULL;
     server.configfile = NULL;
     server.pidfile = NULL;
     server.shutdown = 0;
@@ -109,34 +112,29 @@ void serverInitConfig(void)
     server.verbosity = CONFIG_DEFAULT_VERBOSITY;
     server.syslog = CONFIG_DEFAULT_SYSLOG_ENABLED;
     server.maxclients = CONFIG_DEFAULT_MAX_CLIENTS;
-    server.el = aeCreateEventLoop(server.maxclients);
     server.cron_event_id = AE_ERR;
     server.hz = CONFIG_DEFAULT_HZ;
     server.reconnect_interval = CONFIG_DEFAULT_RECONNECT_INTERVAL_MS;
 
-    server.logfile = strdup(CONFIG_DEFAULT_LOGFILE);
-    if (!server.logfile) {
-        serverLog(LL_ERROR, "strdup failed");
-        exit(1);
+    server.el = aeCreateEventLoop(server.maxclients);
+    if (!server.el) {
     }
 
     server.serial_configfile = strdup(CONFIG_DEFAULT_SERIAL_CONFIG_FILE);
     if (!server.serial_configfile) {
-        serverLog(LL_ERROR, "strdup failed");
+        fprintf(stderr, "strdup failed");
         exit(1);
     }
 }
 
 void serverInit(void)
 {
-    signal(SIGHUP, SIG_IGN);
-    signal(SIGPIPE, SIG_IGN);
-    setupSignalHandlers();
+    _setupSignalHandlers();
 
     server.cron_event_id = aeCreateTimeEvent(server.el, 1, serverCron, NULL, NULL);
 
     if (server.cron_event_id == AE_ERR) {
-        serverLog(LL_ERROR, "Can't create event loop timers.");
+        serverLog(LL_ERROR, "Can't create event loop timers");
         exit(1);
     }
 
@@ -157,7 +155,7 @@ void serverTerm(void)
     server.serial_configfile = NULL;
 
     if (aeDeleteTimeEvent(server.el, server.cron_event_id) == AE_ERR) {
-        serverLog(LL_WARNING, "Failed removing event loop timers.");
+        serverLog(LL_WARN, "Failed removing event loop timers");
     }
 
     server.cron_event_id = AE_ERR;
@@ -165,7 +163,7 @@ void serverTerm(void)
 
 void version(void)
 {
-    printf("Sproxy server v=%s\n", SPROXY_VERSION);
+    printf("sproxy server v=%s\n", SPROXY_VERSION);
     exit(0);
 }
 
@@ -236,16 +234,8 @@ void serverLogRaw(int level, const char *msg)
     static const int syslogLevelMap[] = {
         LOG_DEBUG,
         LOG_INFO,
-        LOG_NOTICE,
         LOG_WARNING,
         LOG_ERR
-    };
-    static const char* standardLevelMap[] = {
-        "DEBUG",
-        "INFO",
-        "NOTICE",
-        "WARN",
-        "ERROR"
     };
     FILE *fp = NULL;
     char datetime_buf[DATETIME_BUF_SIZE] = {0};
@@ -268,7 +258,7 @@ void serverLogRaw(int level, const char *msg)
     strftime(datetime_buf, sizeof(datetime_buf),
              "%Y-%m-%d %H:%M:%S", localtime(&tv.tv_sec));
 
-    fprintf(fp, "%s %s %s\n", datetime_buf, standardLevelMap[level], msg);
+    fprintf(fp, "%s [%s] %s\n", datetime_buf, serverLogLevel(level), msg);
     fflush(fp);
 
     if (server.logfile[0]) {
@@ -313,6 +303,30 @@ void serverLogErrno(int level, const char *fmt, ...)
     serverLog(level, diag_fmt, msg, strerror(errno), errno);
 }
 
+const char *serverLogLevel(int level)
+{
+    const char *str = NULL;
+
+    switch (level) {
+        case LL_DEBUG:
+            str = "DEBUG";
+            break;
+        case LL_INFO:
+            str = "info";
+            break;
+        case LL_WARN:
+            str = "warn";
+            break;
+        case LL_ERROR:
+            str = "error";
+            break;
+        default:
+            break;
+    }
+
+    return str;
+}
+
 int main(int argc, char *argv[])
 {
     int c;
@@ -348,7 +362,7 @@ int main(int argc, char *argv[])
 
     serverInit();
 
-    serverLog(LL_NOTICE,"Server started, sproxy version " SPROXY_VERSION);
+    serverLog(LL_INFO,"Server started, sproxy version " SPROXY_VERSION);
 
     aeSetBeforeSleepProc(server.el, serverBeforeSleep);
     aeMain(server.el);

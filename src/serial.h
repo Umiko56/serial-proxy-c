@@ -67,26 +67,6 @@ void serialAddNode(serialNode *node);
 void serialDelNode(serialNode *node);
 
 /**
- * @brief Write handle callback when data is ready to be written.
- *
- * @param[in] el - Pointer to event loop
- * @param[in] fd - File descriptor of serialNode
- * @param[in] privdata - Pointer to serialLink
- * @param[in] mask - Event flags
- */
-void serialWriteHandler(aeEventLoop *el, int fd, void *privdata, int mask);
-
-/**
- * @brief Read handle callback when data is ready to be read.
- *
- * @param[in] el - Pointer to event loop
- * @param[in] fd - File descriptor of serialNode
- * @param[in] privdata - Pointer to serialLink
- * @param[in] mask - Event flags
- */
-void serialReadHandler(aeEventLoop *el, int fd, void *privdata, int mask);
-
-/**
  * @brief Associate a serialNode as a virtual of a master serialNode.
  *
  * @param[in] master - serialNode master

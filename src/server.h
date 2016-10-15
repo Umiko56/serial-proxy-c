@@ -15,11 +15,10 @@
 #define C_ERR (-1)
 
 /* Log levels */
-#define LL_DEBUG   (0)
-#define LL_VERBOSE (1)
-#define LL_NOTICE  (2)
-#define LL_WARNING (3)
-#define LL_ERROR   (4)
+#define LL_DEBUG (0)
+#define LL_INFO  (1)
+#define LL_WARN  (2)
+#define LL_ERROR (3)
 
 #define LOG_MAX_LEN (1024)
 
@@ -29,7 +28,6 @@
 #define CONFIG_MAX_HZ                        (500)
 #define CONFIG_DEFAULT_PID_FILE              ("/var/run/sproxyd.pid")
 #define CONFIG_DEFAULT_DAEMONIZE             (0)
-#define CONFIG_DEFAULT_LOGFILE               ("")
 #define CONFIG_DEFAULT_SYSLOG_ENABLED        (0)
 #define CONFIG_DEFAULT_MAX_CLIENTS           (1000)
 #define CONFIG_DEFAULT_VERBOSITY             (LL_ERROR)
@@ -94,6 +92,15 @@ void serverLogRaw(int level, const char *msg);
  * @param[in] ... - Variable arguments
  */
 void serverLogErrno(int level, const char *fmt, ...);
+
+/**
+ * @brief Log level to string.
+ *
+ * @param[in] level - Log level
+ *
+ * @return Log level string or NULL if level is invalid
+ */
+const char *serverLogLevel(int level);
 
 /**
  * @brief Load server configuration from given file.

@@ -38,6 +38,26 @@ static void _serialLinkIOError(serialLink *link);
  */
 static void _serialReconnect(void);
 
+/**
+ * @brief Write handle callback when data is ready to be written.
+ *
+ * @param[in] el - Pointer to event loop
+ * @param[in] fd - File descriptor of serialNode
+ * @param[in] privdata - Pointer to serialLink
+ * @param[in] mask - Event flags
+ */
+static void _serialWriteHandler(aeEventLoop *el, int fd, void *privdata, int mask);
+
+/**
+ * @brief Read handle callback when data is ready to be read.
+ *
+ * @param[in] el - Pointer to event loop
+ * @param[in] fd - File descriptor of serialNode
+ * @param[in] privdata - Pointer to serialLink
+ * @param[in] mask - Event flags
+ */
+static void _serialReadHandler(aeEventLoop *el, int fd, void *privdata, int mask);
+
 static serialLink *_serialCreateLink(serialNode *node)
 {
     serialLink *link;
@@ -232,9 +252,9 @@ static serialLink *_serialCreateLink(serialNode *node)
     }
 
     if (nodeIsMaster(node)) {
-        aeCreateFileEvent(server.el, link->fd, AE_READABLE, serialReadHandler, link);
+        aeCreateFileEvent(server.el, link->fd, AE_READABLE, _serialReadHandler, link);
     } else if (nodeIsVirtual(node)) {
-        aeCreateFileEvent(server.el, link->fd, AE_WRITABLE, serialWriteHandler, link);
+        aeCreateFileEvent(server.el, link->fd, AE_WRITABLE, _serialWriteHandler, link);
     }
 
     node->link = link;
@@ -292,7 +312,7 @@ static void _serialReconnect(void)
 
         if (!node->link) {
             if (serialConnectNode(node) == C_ERR) {
-                serverLog(LL_WARNING, "Problem reconnecting serial device: %s",
+                serverLog(LL_WARN, "Problem reconnecting serial device: %s",
                           node->name);
                 connected = 0;
             } else {
@@ -306,9 +326,8 @@ static void _serialReconnect(void)
             while (vnode) {
                 if (!vnode->link) {
                     if (serialConnectNode(vnode) == C_ERR) {
-                        serverLog(LL_WARNING, "Problem reconnecting virtual "
-                                  "serial device: %s", vnode->name);
-                        continue;
+                        serverLog(LL_WARN, "Problem reconnecting virtual serial"
+                                 " device: %s", vnode->name);
                     } else {
                         serverLog(LL_DEBUG, "Reconnected virtual: %s", vnode->name);
                     }
@@ -443,26 +462,9 @@ void serialRemoveVirtualNode(serialNode *master, serialNode *virtual)
     }
 }
 
-/*
-void nodeSetMaster(serialNode *n)
+static void _serialWriteHandler(aeEventLoop *el, int fd, void *privdata, int mask)
 {
-    if (nodeIsMaster(n)) {
-        return;
-    }
-
-    if (n->virtualof) {
-        serialNodeRemoveVirtual(n->virtualof, n);
-    }
-
-    n->flags &= ~SERIAL_FLAG_VIRTUAL;
-    n->flags |= SERIAL_FLAG_MASTER;
-    n->virtualof = NULL;
-}
-*/
-
-void serialWriteHandler(aeEventLoop *el, int fd, void *privdata, int mask)
-{
-    int numwritten;
+    int nwrite;
     serialLink *link = (serialLink*) privdata;
 
     if (link && link->node && nodeIsVirtual(link->node)) {
@@ -471,29 +473,35 @@ void serialWriteHandler(aeEventLoop *el, int fd, void *privdata, int mask)
 
         /* Check if master is connected */
         if (mlink && mlink->recvbuflen > 0) {
-            numwritten = write(link->fd, mlink->recvbuf, mlink->recvbuflen);
-            if (numwritten <= 0) {
-                serverLogErrno(LL_DEBUG, "I/O error writing to %s node link",
+            nwrite = write(link->fd, mlink->recvbuf, mlink->recvbuflen);
+            if (nwrite <= 0) {
+                serverLogErrno(LL_ERROR, "I/O error writing to %s node link",
                                link->node->name);
                 _serialLinkIOError(link);
                 link = NULL;
+            } else {
+                serverLog(LL_DEBUG, "Wrote %d bytes from '%s' -> '%s'",
+                         nwrite, mlink->node->name, link->node->name);
             }
         }
     }
 }
 
-void serialReadHandler(aeEventLoop *el, int fd, void *privdata, int mask)
+static void _serialReadHandler(aeEventLoop *el, int fd, void *privdata, int mask)
 {
     serialLink *link = (serialLink*) privdata;
     int nread;
 
     nread = read(link->fd, &link->recvbuf, BUFSIZ);
     if (nread <= 0) {
-        serverLogErrno(LL_DEBUG, "I/O error reading from %s node link: %s",
-                       link->node->name);
-        _serialLinkIOError(link);
-        link = NULL;
+        if (errno != EAGAIN) {
+            serverLogErrno(LL_ERROR, "I/O error reading from %s node link",
+                           link->node->name);
+            _serialLinkIOError(link);
+            link = NULL;
+        }
     } else {
+        serverLog(LL_DEBUG, "Read %d bytes from '%s'", nread, link->node->name);
         link->recvbuflen = nread;
     }
 }
