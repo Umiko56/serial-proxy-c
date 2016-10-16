@@ -84,6 +84,45 @@ may open and read and write to these virtual devices as if they are physical
 devices. Only one virtual device is allowed to write to the master (physical)
 at a time.
 
+## Example
+
+    # Verify physical serial port is writing data
+    $ cat /dev/ttyUSB0
+    �~��3�0���0���������������������^C
+
+    # Create system config pointing to serial configuration
+    $ cat >/etc/serial-proxy/sproxy.ini <<- EOM
+    [system]
+    serial-configfile = /etc/serial-proxy/serial.ini
+    EOM
+
+    # Create configuration file for serial port
+    $ cat > /etc/serial-proxy/serial.ini <<- EOM
+    [/dev/ttyUSB0]
+    virtuals = app1,app2
+    baudrate = 9600
+    EOM
+
+    # Start serial-proxy
+    $ systemctl start serial-proxy
+    # Or
+    $ sproxyd -c /etc/serial-proxy/sproxy.ini
+
+    # Check existence of virtual serial ports
+    $ ls -la /dev/ttyUSB0.*
+    lrwxrwxrwx 1 root root 11 /dev/ttyUSB0.app1 -> /dev/pts/25
+    lrwxrwxrwx 1 root root 11 /dev/ttyUSB0.app2 -> /dev/pts/26
+
+    # Verify that data is coming through
+    $ cat /dev/ttyUSB0.app1
+    �~��3�0���0���������������������^C
+
+    $ cat /dev/ttyUSB0.app2
+    �~��3�0���0���������������������^C
+
+    # Configure your other apps that previously used /dev/ttyUSB0 with either
+    # /dev/ttyUSB0.app1 or /dev/ttyUSB0.app2
+
 ## TODO
 
 - Unit testing
