@@ -5,15 +5,11 @@
 #include <stdint.h>
 #include <stdio.h>
 
-/* Serial state */
-#define SERIAL_OK      (0)  /* Everything looks ok */
-#define SERIAL_FAIL    (1)  /* The serial device is not working */
-
 /* Serial flags */
 enum {
-    SERIAL_FLAG_MASTER    = 1,  /* The node is a master */
-    SERIAL_FLAG_VIRTUAL   = 2,  /* The node is a virtual */
-    SERIAL_FLAG_WRITER    = 4,  /* The node is a writer */
+    SERIAL_FLAG_MASTER  = 1,  /* The node is a master */
+    SERIAL_FLAG_VIRTUAL = 2,  /* The node is a virtual */
+    SERIAL_FLAG_WRITER  = 4,  /* The node is a writer */
 };
 
 #define nodeIsMaster(n) ((n)->flags & SERIAL_FLAG_MASTER)
@@ -73,7 +69,6 @@ void serialDelNode(serialNode *node);
  *
  * @param[in] master - serialNode master
  * @param[in] virtual - serialNode virtual to associate with master
- *
  */
 void serialAddVirtualNode(serialNode *master, serialNode *virtual);
 
@@ -82,7 +77,6 @@ void serialAddVirtualNode(serialNode *master, serialNode *virtual);
  *
  * @param[in] master - serialNode master
  * @param[in] virtual - serialNode virtual to remove
- *
  */
 void serialRemoveVirtualNode(serialNode *master, serialNode *virtual);
 
