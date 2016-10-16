@@ -21,6 +21,8 @@ This is a C port of [rkubik/serial-proxy](https://github.com/rkubik/serial-proxy
 - Dependency free
 - Simple INI configuration
 - Linux only (pull requests welcome for other platforms)
+- Virtual writers
+- Event-driven, single process
 
 ## Installation
 
@@ -44,8 +46,9 @@ Debugging:
 
 serial-proxy is driven by two INI config files:
 
-1. sproxy.ini - system configuration (optional). Can be set via `-c` command-line
-   argument. The systemd service file will set `-c` to /etc/serial-proxy/sproxy.ini`.
+1. sproxy.ini - system configuration (optional). Can be set via `-c`
+   command-line argument. The systemd service file will set `-c` to 
+   `/etc/serial-proxy/sproxy.ini`.
 
 Example:
 
@@ -61,20 +64,28 @@ Example:
     reconnect-interval = 5000
 
 2. serial.ini - serial port configuration. Set via system configuration file
-   using `serial-configfile`. Default: `serial.ini`. The serial port device
+   using `serial-configfile`. Default: `serial.ini`.
 
 Example:
 
     [/dev/ttyS5]
     baudrate = 38400
     virtuals = a b c
+    writer = a
 
     [/dev/ttyS6]
     baudrate = 9600
     virtuals = d e f
 
+The serial configuration file above will attempt to open two physical devices
+`/dev/ttyS5` and `/dev/ttyS6`. `/dev/ttyS5` will proxy data two three virtual
+devices `/dev/ttyS5.a`, `/dev/ttyS5.b`, and `/dev/ttyS5.c`. Other applications
+may open and read and write to these virtual devices as if they are physical
+devices. Only one virtual device is allowed to write to the master (physical)
+at a time.
+
 ## TODO
 
-- Allow virtuals writers
 - Unit testing
 - More platform support
+- Improve data flow control

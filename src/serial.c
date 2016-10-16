@@ -8,6 +8,9 @@
 #include <sys/ioctl.h>
 #include <linux/serial.h>
 
+/* <device-path>.<virtual-suffix> */
+#define SERIAL_VIRTUAL_FORMAT ("%s.%s")
+
 /**
  * @brief Create and open a new connection link.
  *
@@ -39,24 +42,56 @@ static void _serialLinkIOError(serialLink *link);
 static void _serialReconnect(void);
 
 /**
- * @brief Write handle callback when data is ready to be written.
+ * @brief Write data from fromlink to tolink.
+ *
+ * @param[in] tolink - Link to write to
+ * @param[in[ fromlink - Link to read buffer
+ *
+ */
+static void _serialWriteLink(serialLink *tolink, serialLink *fromlink);
+
+/**
+ * @brief Callback for read and writes.
  *
  * @param[in] el - Pointer to event loop
  * @param[in] fd - File descriptor of serialNode
  * @param[in] privdata - Pointer to serialLink
  * @param[in] mask - Event flags
  */
-static void _serialWriteHandler(aeEventLoop *el, int fd, void *privdata, int mask);
+static void _serialEventHandler(aeEventLoop *el, int fd, void *privdata, int mask);
+
+/**
+ * @brief Write handle callback when data is ready to be written.
+ *
+ * @param[in] link - Communication link with a write event
+ */
+static void _serialWriteHandler(serialLink *link);
 
 /**
  * @brief Read handle callback when data is ready to be read.
  *
- * @param[in] el - Pointer to event loop
- * @param[in] fd - File descriptor of serialNode
- * @param[in] privdata - Pointer to serialLink
- * @param[in] mask - Event flags
+ * @param[in] link - Communication link with a read event
  */
-static void _serialReadHandler(aeEventLoop *el, int fd, void *privdata, int mask);
+static void _serialReadHandler(serialLink *link);
+
+/**
+ * @brief Return the event flags a serial node should have (based on current
+ *        configuration).
+ *
+ * @param[in] node - Serial node
+ *
+ * @return event flags
+ */
+static int _serialEventFlags(serialNode *node);
+
+/**
+ * @brief Return the event flags as a string.
+ *
+ * @param[in] node - Serial node
+ *
+ * @return Flags as a string
+ */
+static const char *_serialEventString(serialNode *node);
 
 static serialLink *_serialCreateLink(serialNode *node)
 {
@@ -251,11 +286,11 @@ static serialLink *_serialCreateLink(serialNode *node)
         goto err;
     }
 
-    if (nodeIsMaster(node)) {
-        aeCreateFileEvent(server.el, link->fd, AE_READABLE, _serialReadHandler, link);
-    } else if (nodeIsVirtual(node)) {
-        aeCreateFileEvent(server.el, link->fd, AE_WRITABLE, _serialWriteHandler, link);
-    }
+    aeCreateFileEvent(server.el,
+                      link->fd,
+                      _serialEventFlags(node),
+                      _serialEventHandler,
+                      link);
 
     node->link = link;
     link->node = node;
@@ -269,14 +304,45 @@ done:
     return link;
 }
 
+static int _serialEventFlags(serialNode *node)
+{
+    int flags = 0;
+
+    if (nodeIsMaster(node)) {
+        flags = AE_READABLE;
+        if (serialGetVirtualWriterNode(node)) {
+            flags |= AE_WRITABLE;
+        }
+    } else if (nodeIsVirtual(node)) {
+        flags = AE_WRITABLE;
+        if (nodeIsWriter(node)) {
+            flags |= AE_READABLE;
+        }
+    }
+
+    return flags;
+}
+
+static const char *_serialEventString(serialNode *node)
+{
+    const char *str = NULL;
+    int flags = _serialEventFlags(node);
+
+    if (flags & (AE_READABLE | AE_WRITABLE)) {
+        str = "rw";
+    } else if (flags & AE_READABLE) {
+        str = "r";
+    } else if (flags & AE_READABLE) {
+        str = "w";
+    }
+
+    return str;
+}
+
 static void _serialFreeLink(serialLink *link)
 {
     if (link->fd != -1 && link->node) {
-        if (nodeIsMaster(link->node)) {
-            aeDeleteFileEvent(server.el, link->fd, AE_READABLE);
-        } else if (nodeIsVirtual(link->node)) {
-            aeDeleteFileEvent(server.el, link->fd, AE_WRITABLE);
-        }
+        aeDeleteFileEvent(server.el, link->fd, _serialEventFlags(link->node));
     }
 
     if (link->node) {
@@ -316,7 +382,8 @@ static void _serialReconnect(void)
                           node->name);
                 connected = 0;
             } else {
-                serverLog(LL_DEBUG, "Reconnected serial: %s", node->name);
+                serverLog(LL_INFO, "Reconnected serial: %s (%d) [%s]",
+                          node->name, node->link->fd, _serialEventString(node));
             }
         }
 
@@ -329,7 +396,9 @@ static void _serialReconnect(void)
                         serverLog(LL_WARN, "Problem reconnecting virtual serial"
                                  " device: %s", vnode->name);
                     } else {
-                        serverLog(LL_DEBUG, "Reconnected virtual: %s", vnode->name);
+                        serverLog(LL_INFO, "Reconnected virtual: %s (%d) [%s]",
+                                  vnode->name, vnode->link->fd,
+                                  _serialEventString(vnode));
                     }
                 }
                 vnode = vnode->next;
@@ -359,6 +428,7 @@ void serialBeforeSleep(void)
         }
         node = node->next;
     }
+    usleep(1000000);
 }
 
 serialNode *serialCreateNode(const char *nodename, uint32_t flags)
@@ -462,46 +532,83 @@ void serialRemoveVirtualNode(serialNode *master, serialNode *virtual)
     }
 }
 
-static void _serialWriteHandler(aeEventLoop *el, int fd, void *privdata, int mask)
+static void _serialEventHandler(aeEventLoop *el, int fd, void *privdata, int mask)
+{
+    serialLink *link = (serialLink*)privdata;
+
+    (void) el;
+    (void) fd;
+
+    /* Could be closed if an error occurred while processing a read event */
+    if (!link) {
+        return;
+    }
+
+    if (mask & AE_READABLE) {
+        _serialReadHandler(link);
+    }
+
+    if (mask & AE_WRITABLE) {
+        _serialWriteHandler(link);
+    }
+}
+
+static void _serialWriteLink(serialLink *fromlink, serialLink *tolink)
 {
     int nwrite;
-    serialLink *link = (serialLink*) privdata;
 
-    if (link && link->node && nodeIsVirtual(link->node)) {
-        /* Read from master */
-        serialLink *mlink = link->node->virtualof->link;
-
-        /* Check if master is connected */
-        if (mlink && mlink->recvbuflen > 0) {
-            nwrite = write(link->fd, mlink->recvbuf, mlink->recvbuflen);
-            if (nwrite <= 0) {
-                serverLogErrno(LL_ERROR, "I/O error writing to %s node link",
-                               link->node->name);
-                _serialLinkIOError(link);
-                link = NULL;
-            } else {
-                serverLog(LL_DEBUG, "Wrote %d bytes from '%s' -> '%s'",
-                         nwrite, mlink->node->name, link->node->name);
-            }
+    /*
+    serverLog(LL_DEBUG, "%s (%d) -> %s (%d)",
+              fromlink->node->name, fromlink->recvbuflen,
+              tolink->node->name, tolink->recvbuflen);
+*/
+    if (fromlink && fromlink->recvbuflen > 0) {
+        nwrite = write(tolink->fd, fromlink->recvbuf, fromlink->recvbuflen);
+        if (nwrite <= 0) {
+            serverLogErrno(LL_ERROR, "I/O error writing to %s (%d) node link",
+                           tolink->node->name, tolink->fd);
+            _serialLinkIOError(tolink);
+            tolink = NULL;
+        } else {
+            serverLog(LL_DEBUG, "Wrote %d bytes from %s (%d) to %s (%d)",
+                      nwrite,
+                      fromlink->node->name, fromlink->fd,
+                      tolink->node->name, tolink->fd);
         }
     }
 }
 
-static void _serialReadHandler(aeEventLoop *el, int fd, void *privdata, int mask)
+static void _serialWriteHandler(serialLink *link)
 {
-    serialLink *link = (serialLink*) privdata;
+    serialNode *virtual;
+
+    if (nodeIsVirtual(link->node)) {
+        /* Read from master */
+        _serialWriteLink(link->node->virtualof->link, link);
+    } else if (nodeIsMaster(link->node)) {
+        /* Read from virtual */
+        virtual = serialGetVirtualWriterNode(link->node);
+        if (virtual) {
+            _serialWriteLink(virtual->link, link);
+        }
+    }
+}
+
+static void _serialReadHandler(serialLink *link)
+{
     int nread;
 
     nread = read(link->fd, &link->recvbuf, BUFSIZ);
     if (nread <= 0) {
         if (errno != EAGAIN) {
-            serverLogErrno(LL_ERROR, "I/O error reading from %s node link",
-                           link->node->name);
+            serverLogErrno(LL_ERROR, "I/O error reading from %s (%d) node link",
+                           link->node->name, link->fd);
             _serialLinkIOError(link);
             link = NULL;
         }
     } else {
-        serverLog(LL_DEBUG, "Read %d bytes from '%s'", nread, link->node->name);
+        serverLog(LL_DEBUG, "Read %d bytes from %s (%d)",
+                  nread, link->node->name, link->fd);
         link->recvbuflen = nread;
     }
 }
@@ -566,6 +673,36 @@ serialNode *serialGetVirtualNode(serialNode *master, const char *nodename)
     return node;
 }
 
+serialNode *serialGetVirtualWriterNode(serialNode *master)
+{
+    serialNode *node = NULL;
+    serialNode *cur = master->virtual_head;
+
+    while (cur) {
+        if (nodeIsWriter(cur)) {
+            node = cur;
+            break;
+        }
+        cur = cur->next;
+    }
+
+    return node;
+}
+
+int serialVirtualName(const char *device, const char *suffix,
+                      char *name, size_t name_size)
+{
+    int ret = 0;
+    int n;
+
+    n = snprintf(name, name_size, SERIAL_VIRTUAL_FORMAT, device, suffix);
+    if (!(n > -1 && n < name_size)) {
+        ret = -1;
+    }
+
+    return ret;
+}
+
 void serialCron(void)
 {
     _serialReconnect();
@@ -584,7 +721,7 @@ void serialTerm(void)
             tmp = vnode;
             vnode = vnode->next;
 
-            serverLog(LL_DEBUG, "Closing virtual: %s", tmp->name);
+            serverLog(LL_INFO, "Closing virtual: %s", tmp->name);
 
             if (tmp->link) {
                 _serialFreeLink(tmp->link);
@@ -598,7 +735,7 @@ void serialTerm(void)
         tmp = node;
         node = node->next;
 
-        serverLog(LL_DEBUG, "Closing serial: %s", tmp->name);
+        serverLog(LL_INFO, "Closing serial: %s", tmp->name);
 
         if (tmp->link) {
             _serialFreeLink(tmp->link);

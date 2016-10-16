@@ -154,13 +154,9 @@ static int _serialConfigHandler(void* user,
 {
     struct sproxyServer *server = (struct sproxyServer*)user;
     serialNode *node;
-    serialNode *vnode;
-    int j;
 
-    /* check if serial port has been added */
+    /* Check if serial port has been added, if not, create */
     node = serialGetNode(section);
-
-    /* not found, create */
     if (!node) {
         node = serialCreateNode(section, SERIAL_FLAG_MASTER);
         serialAddNode(node);
@@ -169,11 +165,10 @@ static int _serialConfigHandler(void* user,
     if (N_MATCH("baudrate")) {
         node->baudrate = atoi(value);
     } else if (N_MATCH("virtuals")) {
-        char *str;
-        char *token;
         char virtual_name[PATH_MAX];
         serialNode *vnode;
-        int n;
+        char *str;
+        char *token;
 
         str = strdup(value);
         if (!str) {
@@ -183,11 +178,10 @@ static int _serialConfigHandler(void* user,
 
         token = strtok(str, " ");
 
-        while (token != NULL) {
-            n = snprintf(virtual_name, sizeof(virtual_name),
-                         "%s.%s", section, token);
-            if (!(n > -1 && n < sizeof(virtual_name))) {
-                fprintf(stderr, "Can't set virtual: %s\n", token);
+        while (token) {
+            if (serialVirtualName(section, token,
+                                  virtual_name, sizeof(virtual_name)) != 0) {
+                fprintf(stderr, "Can't create virtual name: %s\n", token);
                 exit(1);
             }
 
@@ -202,6 +196,20 @@ static int _serialConfigHandler(void* user,
 
         free(str);
         str = NULL;
+    } else if (N_MATCH("writer")) {
+        char virtual_name[PATH_MAX];
+        serialNode *vnode;
+
+        if (serialVirtualName(section, value,
+                              virtual_name, sizeof(virtual_name)) != 0) {
+            fprintf(stderr, "Can't create virtual name: %s\n", value);
+            exit(1);
+        }
+
+        vnode = serialGetVirtualNode(node, virtual_name);
+        if (vnode) {
+            vnode->flags |= SERIAL_FLAG_WRITER;
+        }
     } else {
         return 0;
     }

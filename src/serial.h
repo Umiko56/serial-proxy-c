@@ -11,12 +11,14 @@
 
 /* Serial flags */
 enum {
-    SERIAL_FLAG_MASTER    = 1, /* The node is a master */
-    SERIAL_FLAG_VIRTUAL   = 2, /* The node is a virtual */
+    SERIAL_FLAG_MASTER    = 1,  /* The node is a master */
+    SERIAL_FLAG_VIRTUAL   = 2,  /* The node is a virtual */
+    SERIAL_FLAG_WRITER    = 4,  /* The node is a writer */
 };
 
 #define nodeIsMaster(n) ((n)->flags & SERIAL_FLAG_MASTER)
 #define nodeIsVirtual(n) ((n)->flags & SERIAL_FLAG_VIRTUAL)
+#define nodeIsWriter(n) ((n)->flags & SERIAL_FLAG_WRITER)
 
 struct serialNode;
 
@@ -111,5 +113,27 @@ serialNode *serialGetNode(const char *nodename);
  * @return Pointer to node if found or NULL if not found
  */
 serialNode *serialGetVirtualNode(serialNode *master, const char *nodename);
+
+/**
+ * @brief Return the virtual writer in the masters virtual set.
+ *
+ * @param[in] master - Master node
+ *
+ * @return Pointer to the virtual writer node, or NULL if no writers found
+ */
+serialNode *serialGetVirtualWriterNode(serialNode *master);
+
+/**
+ * @brief Create a virtual name from a device path and suffix.
+ *
+ * @param[in] device - Device path (master), ie. /dev/ttyS3
+ * @param[in] suffix - Virtual suffix name, ie. myapp
+ * @param[out] name - Buffer to store virtual name
+ * @param[in] name_size - Size of name buffer
+ *
+ * @return 0 if successful, -1 otherwise
+ */
+int serialVirtualName(const char *device, const char *suffix,
+                      char *name, size_t name_size);
 
 #endif

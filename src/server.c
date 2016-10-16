@@ -309,7 +309,7 @@ const char *serverLogLevel(int level)
 
     switch (level) {
         case LL_DEBUG:
-            str = "DEBUG";
+            str = "debug";
             break;
         case LL_INFO:
             str = "info";

@@ -1,4 +1,5 @@
-/*
+/* Linux epoll(2) based ae.c module
+ *
  * Copyright (c) 2009-2012, Salvatore Sanfilippo <antirez at gmail dot com>
  * All rights reserved.
  *
@@ -27,7 +28,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "server.h"
+
 #include <sys/epoll.h>
 
 typedef struct aeApiState {
@@ -63,6 +64,7 @@ static int aeApiResize(aeEventLoop *eventLoop, int setsize) {
 
 static void aeApiFree(aeEventLoop *eventLoop) {
     aeApiState *state = eventLoop->apidata;
+
     close(state->epfd);
     free(state->events);
     free(state);
@@ -70,7 +72,7 @@ static void aeApiFree(aeEventLoop *eventLoop) {
 
 static int aeApiAddEvent(aeEventLoop *eventLoop, int fd, int mask) {
     aeApiState *state = eventLoop->apidata;
-    struct epoll_event ee;
+    struct epoll_event ee = {0}; /* avoid valgrind warning */
     /* If the fd was already monitored for some event, we need a MOD
      * operation. Otherwise we need an ADD operation. */
     int op = eventLoop->events[fd].mask == AE_NONE ?
@@ -80,28 +82,26 @@ static int aeApiAddEvent(aeEventLoop *eventLoop, int fd, int mask) {
     mask |= eventLoop->events[fd].mask; /* Merge old events */
     if (mask & AE_READABLE) ee.events |= EPOLLIN;
     if (mask & AE_WRITABLE) ee.events |= EPOLLOUT;
-    ee.data.u64 = 0; /* avoid valgrind warning */
     ee.data.fd = fd;
-    if (epoll_ctl(state->epfd, op, fd, &ee) == -1) return -1;
+    if (epoll_ctl(state->epfd,op,fd,&ee) == -1) return -1;
     return 0;
 }
 
 static void aeApiDelEvent(aeEventLoop *eventLoop, int fd, int delmask) {
     aeApiState *state = eventLoop->apidata;
-    struct epoll_event ee;
+    struct epoll_event ee = {0}; /* avoid valgrind warning */
     int mask = eventLoop->events[fd].mask & (~delmask);
 
     ee.events = 0;
     if (mask & AE_READABLE) ee.events |= EPOLLIN;
     if (mask & AE_WRITABLE) ee.events |= EPOLLOUT;
-    ee.data.u64 = 0; /* avoid valgrind warning */
     ee.data.fd = fd;
     if (mask != AE_NONE) {
-        epoll_ctl(state->epfd, EPOLL_CTL_MOD, fd, &ee);
+        epoll_ctl(state->epfd,EPOLL_CTL_MOD,fd,&ee);
     } else {
         /* Note, Kernel < 2.6.9 requires a non null event pointer even for
          * EPOLL_CTL_DEL. */
-        epoll_ctl(state->epfd, EPOLL_CTL_DEL, fd, &ee);
+        epoll_ctl(state->epfd,EPOLL_CTL_DEL,fd,&ee);
     }
 }
 
@@ -109,8 +109,8 @@ static int aeApiPoll(aeEventLoop *eventLoop, struct timeval *tvp) {
     aeApiState *state = eventLoop->apidata;
     int retval, numevents = 0;
 
-    retval = epoll_wait(state->epfd, state->events, eventLoop->setsize,
-        tvp ? (tvp->tv_sec*1000 + tvp->tv_usec/1000) : -1);
+    retval = epoll_wait(state->epfd,state->events,eventLoop->setsize,
+            tvp ? (tvp->tv_sec*1000 + tvp->tv_usec/1000) : -1);
     if (retval > 0) {
         int j;
 
@@ -128,4 +128,8 @@ static int aeApiPoll(aeEventLoop *eventLoop, struct timeval *tvp) {
         }
     }
     return numevents;
+}
+
+static char *aeApiName(void) {
+    return "epoll";
 }
